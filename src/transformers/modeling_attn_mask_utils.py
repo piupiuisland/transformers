@@ -63,20 +63,65 @@ class AttentionMaskConverter:
                 f"Make sure that when passing `sliding_window` that its value is a strictly positive integer, not `{self.sliding_window}`"
             )
 
+    # def to_causal_4d(
+    #     self,
+    #     batch_size: int,
+    #     query_length: int,
+    #     key_value_length: int,
+    #     dtype: torch.dtype,
+    #     device: Union[torch.device, "str"] = "cpu",
+    # ) -> Optional[torch.Tensor]:
+    #     """
+    #     Creates a causal 4D mask of (bsz, head_dim=1, query_length, key_value_length) shape and adds large negative
+    #     bias to upper right hand triangular matrix (causal mask).
+    #     """
+    #     if not self.is_causal:
+    #         raise ValueError(f"Please use `to_causal_4d` only if {self.__class__} has `is_causal` set to True.")
+
+    #     # If shape is not cached, create a new causal mask and cache it
+    #     input_shape = (batch_size, query_length)
+    #     past_key_values_length = key_value_length - query_length
+
+    #     # create causal mask
+    #     # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+    #     causal_4d_mask = None
+
+    #     # before change
+    #     print("input_shape: ", input_shape)
+    #     print("dtype: ", dtype)
+    #     if input_shape[-1] > 1 or self.sliding_window is not None:
+    #         causal_4d_mask = self._make_causal_mask(
+    #             input_shape,
+    #             dtype,
+    #             device=device,
+    #             past_key_values_length=past_key_values_length,
+    #             sliding_window=self.sliding_window,
+    #         )
+
+    #     # causal_4d_mask = self._make_causal_mask(
+    #     #     input_shape,
+    #     #     dtype,
+    #     #     device=device,
+    #     #     past_key_values_length=past_key_values_length,
+    #     #     sliding_window=self.sliding_window,
+    #     # )
+
+    #     return causal_4d_mask
+
+
+    ## customized for qtoolsv2
     def to_causal_4d(
         self,
         batch_size: int,
         query_length: int,
         key_value_length: int,
         dtype: torch.dtype,
-        device: Union[torch.device, "str"] = "cpu",
+        device: Union[torch.device, "str"] = "cuda",
     ) -> Optional[torch.Tensor]:
         """
         Creates a causal 4D mask of (bsz, head_dim=1, query_length, key_value_length) shape and adds large negative
         bias to upper right hand triangular matrix (causal mask).
         """
-        if not self.is_causal:
-            raise ValueError(f"Please use `to_causal_4d` only if {self.__class__} has `is_causal` set to True.")
 
         # If shape is not cached, create a new causal mask and cache it
         input_shape = (batch_size, query_length)
@@ -85,14 +130,16 @@ class AttentionMaskConverter:
         # create causal mask
         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
         causal_4d_mask = None
-        if input_shape[-1] > 1 or self.sliding_window is not None:
-            causal_4d_mask = self._make_causal_mask(
-                input_shape,
-                dtype,
-                device=device,
-                past_key_values_length=past_key_values_length,
-                sliding_window=self.sliding_window,
-            )
+
+        input_shape = (1,77)
+        dtype = torch.bfloat16
+        causal_4d_mask = self._make_causal_mask(
+            input_shape,
+            dtype,
+            device=device,
+            past_key_values_length=past_key_values_length,
+            sliding_window=self.sliding_window,
+        )
 
         return causal_4d_mask
 
@@ -147,7 +194,7 @@ class AttentionMaskConverter:
     def _make_causal_mask(
         input_ids_shape: torch.Size,
         dtype: torch.dtype,
-        device: torch.device,
+        device: torch.device = torch.device("cuda"),
         past_key_values_length: int = 0,
         sliding_window: Optional[int] = None,
     ):
@@ -155,25 +202,35 @@ class AttentionMaskConverter:
         Make causal mask used for bi-directional self-attention.
         """
         bsz, tgt_len = input_ids_shape
+        print("input_ids_shape: ", input_ids_shape)
+        print("bsz, tgt_len: ", bsz, tgt_len)
+        print("dtype: ", dtype)
+        print("device: ", device)
+
         mask = torch.full((tgt_len, tgt_len), torch.finfo(dtype).min, device=device)
         mask_cond = torch.arange(mask.size(-1), device=device)
         mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1), 0)
 
         mask = mask.to(dtype)
 
-        if past_key_values_length > 0:
-            mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
+        # print("--- at /home/ubuntu/work_root/ax_repos/transformers/src/transformers/modeling_attn_mask_utils.py")
+        # print("past_key_values_length: ", past_key_values_length)
 
-        # add lower triangular sliding window mask if necessary
-        if sliding_window is not None:
-            diagonal = past_key_values_length - sliding_window - 1
+        ## delete below code
+        # if past_key_values_length > 0:
+        #     mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
 
-            context_mask = torch.tril(torch.ones_like(mask, dtype=torch.bool), diagonal=diagonal)
-            # Recent changes in PyTorch prevent mutations on tensors converted with aten::_to_copy
-            # See https://github.com/pytorch/pytorch/issues/127571
-            if is_torchdynamo_compiling():
-                mask = mask.clone()
-            mask.masked_fill_(context_mask, torch.finfo(dtype).min)
+        # # add lower triangular sliding window mask if necessary
+        # print("sliding_window: ", sliding_window)
+        # if sliding_window is not None:
+        #     diagonal = past_key_values_length - sliding_window - 1
+
+        #     context_mask = torch.tril(torch.ones_like(mask, dtype=torch.bool), diagonal=diagonal)
+        #     # Recent changes in PyTorch prevent mutations on tensors converted with aten::_to_copy
+        #     # See https://github.com/pytorch/pytorch/issues/127571
+        #     if is_torchdynamo_compiling():
+        #         mask = mask.clone()
+        #     mask.masked_fill_(context_mask, torch.finfo(dtype).min)
 
         return mask[None, None, :, :].expand(bsz, 1, tgt_len, tgt_len + past_key_values_length)
 
@@ -479,3 +536,4 @@ def _create_4d_causal_attention_mask(
     )
 
     return attention_mask
+

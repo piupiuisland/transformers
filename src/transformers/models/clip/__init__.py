@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from .tokenization_clip_fast import *
 else:
     import sys
+    from .configuration_clip import *
+    from .modeling_clip import CLIPTextTransformer
 
     _file = globals()["__file__"]
     sys.modules[__name__] = _LazyModule(__name__, _file, define_import_structure(_file), module_spec=__spec__)

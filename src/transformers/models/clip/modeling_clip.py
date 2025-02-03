@@ -270,26 +270,52 @@ class CLIPTextEmbeddings(nn.Module):
             "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
         )
 
+    # def forward(
+    #     self,
+    #     input_ids: Optional[torch.LongTensor] = None,
+    #     position_ids: Optional[torch.LongTensor] = None,
+    #     inputs_embeds: Optional[torch.FloatTensor] = None,
+    # ) -> torch.Tensor:
+    #     seq_length = input_ids.shape[-1] if input_ids is not None else inputs_embeds.shape[-2]
+    #     max_position_embedding = self.position_embedding.weight.shape[0]
+
+    #     # remove below code for trace
+    #     if seq_length > max_position_embedding:
+    #         raise ValueError(
+    #             f"Sequence length must be less than max_position_embeddings (got `sequence length`: "
+    #             f"{seq_length} and max_position_embeddings: {max_position_embedding}"
+    #         )
+
+    #     # print("position_ids: ", position_ids)
+    #     if position_ids is None:
+    #         position_ids = self.position_ids[:, :seq_length]
+
+    #     # print("inputs_embeds: ", )
+    #     if inputs_embeds is None:
+    #         inputs_embeds = self.token_embedding(input_ids)
+
+    #     position_embeddings = self.position_embedding(position_ids)
+    #     embeddings = inputs_embeds + position_embeddings
+
+    #     return embeddings
+
+    ## below is my forward func
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
     ) -> torch.Tensor:
-        seq_length = input_ids.shape[-1] if input_ids is not None else inputs_embeds.shape[-2]
+        seq_length = 77
+        # print("seq_length: ", seq_length)
+        # print("input_ids.shape[-1]: ", input_ids.shape[-1])
+        # print("inputs_embeds.shape[-2]: ", inputs_embeds.shape[-2])
         max_position_embedding = self.position_embedding.weight.shape[0]
 
-        if seq_length > max_position_embedding:
-            raise ValueError(
-                f"Sequence length must be less than max_position_embeddings (got `sequence length`: "
-                f"{seq_length} and max_position_embeddings: {max_position_embedding}"
-            )
-
-        if position_ids is None:
-            position_ids = self.position_ids[:, :seq_length]
-
-        if inputs_embeds is None:
-            inputs_embeds = self.token_embedding(input_ids)
+        # print("self.position_ids: ", self.position_ids)
+        position_ids = self.position_ids[:, :seq_length]
+        inputs_embeds = self.token_embedding(input_ids)
 
         position_embeddings = self.position_embedding(position_ids)
         embeddings = inputs_embeds + position_embeddings
@@ -494,7 +520,78 @@ class CLIPSdpaAttention(CLIPAttention):
     SDPA API.
     """
 
-    # Adapted from CLIPAttention.forward
+    # # Adapted from CLIPAttention.forward
+    # def forward(
+    #     self,
+    #     hidden_states: torch.Tensor,
+    #     attention_mask: Optional[torch.Tensor] = None,
+    #     causal_attention_mask: Optional[torch.Tensor] = None,
+    #     output_attentions: Optional[bool] = False,
+    # ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    #     print("**** at CLIPSdpaAttention, output_attentions: ", output_attentions)
+    #     if output_attentions:
+    #         # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+    #         logger.warning_once(
+    #             "CLIPModel is using CLIPSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not "
+    #             "support `output_attentions=True`. Falling back to the manual attention implementation, but specifying "
+    #             "the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can "
+    #             'be removed using the argument `attn_implementation="eager"` when loading the model.'
+    #         )
+    #         return super().forward(
+    #             hidden_states=hidden_states,
+    #             attention_mask=attention_mask,
+    #             causal_attention_mask=causal_attention_mask,
+    #             output_attentions=output_attentions,
+    #         )
+
+    #     print("**** attention_mask is not None", attention_mask is not None)
+    #     print("**** causal_attention_mask is not None", causal_attention_mask is not None)
+    #     # CLIP text model uses both `causal_attention_mask` and `attention_mask`
+    #     if attention_mask is not None and causal_attention_mask is not None:
+    #         attn_mask = attention_mask + causal_attention_mask
+    #     elif causal_attention_mask is not None:
+    #         attn_mask = causal_attention_mask
+    #     else:
+    #         print("**** use attention_mask")
+    #         attn_mask = attention_mask
+
+    #     bsz, tgt_len, embed_dim = hidden_states.size()
+
+    #     query_states = self.q_proj(hidden_states)
+    #     key_states = self.k_proj(hidden_states)
+    #     value_states = self.v_proj(hidden_states)
+
+    #     query_states = query_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+    #     key_states = key_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+    #     value_states = value_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+
+    #     # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with non-contiguous inputs with custom attn_mask,
+    #     # Reference: https://github.com/pytorch/pytorch/issues/112577.
+    #     if not is_torch_greater_or_equal_than_2_2 and query_states.device.type == "cuda" and attn_mask is not None:
+    #         query_states = query_states.contiguous()
+    #         key_states = key_states.contiguous()
+    #         value_states = value_states.contiguous()
+
+    #     # CLIP text model uses both `causal_attention_mask` and `attention_mask` sequentially.
+    #     attn_output = torch.nn.functional.scaled_dot_product_attention(
+    #         query_states,
+    #         key_states,
+    #         value_states,
+    #         attn_mask=attn_mask,
+    #         dropout_p=self.dropout if self.training else 0.0,
+    #         scale=self.scale,
+    #     )
+
+    #     attn_output = attn_output.transpose(1, 2)
+    #     attn_output = attn_output.reshape(bsz, tgt_len, embed_dim)
+
+    #     attn_output = self.out_proj(attn_output)
+
+    #     return attn_output, None
+
+
+
+    # updated forward
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -502,29 +599,11 @@ class CLIPSdpaAttention(CLIPAttention):
         causal_attention_mask: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        if output_attentions:
-            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
-            logger.warning_once(
-                "CLIPModel is using CLIPSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not "
-                "support `output_attentions=True`. Falling back to the manual attention implementation, but specifying "
-                "the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can "
-                'be removed using the argument `attn_implementation="eager"` when loading the model.'
-            )
-            return super().forward(
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                causal_attention_mask=causal_attention_mask,
-                output_attentions=output_attentions,
-            )
 
-        # CLIP text model uses both `causal_attention_mask` and `attention_mask`
-        if attention_mask is not None and causal_attention_mask is not None:
-            attn_mask = attention_mask + causal_attention_mask
-        elif causal_attention_mask is not None:
-            attn_mask = causal_attention_mask
-        else:
-            attn_mask = attention_mask
 
+        attn_mask = causal_attention_mask
+        # print("hidden_states.size(): ", hidden_states.size())
+        qkv_shape = torch.Size([1,77,768])
         bsz, tgt_len, embed_dim = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
@@ -535,12 +614,6 @@ class CLIPSdpaAttention(CLIPAttention):
         key_states = key_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with non-contiguous inputs with custom attn_mask,
-        # Reference: https://github.com/pytorch/pytorch/issues/112577.
-        if not is_torch_greater_or_equal_than_2_2 and query_states.device.type == "cuda" and attn_mask is not None:
-            query_states = query_states.contiguous()
-            key_states = key_states.contiguous()
-            value_states = value_states.contiguous()
 
         # CLIP text model uses both `causal_attention_mask` and `attention_mask` sequentially.
         attn_output = torch.nn.functional.scaled_dot_product_attention(
@@ -591,6 +664,50 @@ class CLIPEncoderLayer(nn.Module):
         self.mlp = CLIPMLP(config)
         self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
 
+    # def forward(
+    #     self,
+    #     hidden_states: torch.Tensor,
+    #     attention_mask: torch.Tensor,
+    #     causal_attention_mask: torch.Tensor,
+    #     output_attentions: Optional[bool] = False,
+    # ) -> Tuple[torch.FloatTensor]:
+    #     """
+    #     Args:
+    #         hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+    #         attention_mask (`torch.FloatTensor`): attention mask of size
+    #             `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
+    #             `(config.encoder_attention_heads,)`.
+    #         output_attentions (`bool`, *optional*):
+    #             Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+    #             returned tensors for more detail.
+    #     """
+    #     residual = hidden_states
+
+    #     hidden_states = self.layer_norm1(hidden_states)
+    #     hidden_states, attn_weights = self.self_attn(
+    #         hidden_states=hidden_states,
+    #         attention_mask=attention_mask,
+    #         causal_attention_mask=causal_attention_mask,
+    #         output_attentions=output_attentions,
+    #     )
+    #     hidden_states = residual + hidden_states
+
+    #     residual = hidden_states
+    #     hidden_states = self.layer_norm2(hidden_states)
+    #     hidden_states = self.mlp(hidden_states)
+    #     hidden_states = residual + hidden_states
+
+    #     outputs = (hidden_states,)
+
+    #     print("^^^^ at CLIPEncoderLayer ")
+    #     print("^^^^ output_attentions: ", output_attentions)
+    #     if output_attentions:
+    #         outputs += (attn_weights,)
+
+    #     return outputs
+
+
+    ## customized forward
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -625,9 +742,6 @@ class CLIPEncoderLayer(nn.Module):
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
-
-        if output_attentions:
-            outputs += (attn_weights,)
 
         return outputs
 
@@ -820,6 +934,95 @@ class CLIPEncoder(nn.Module):
         self.layers = nn.ModuleList([CLIPEncoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
+    ## here i already changed some code, but still works
+    # def forward(
+    #     self,
+    #     inputs_embeds,
+    #     attention_mask: Optional[torch.Tensor] = None,
+    #     causal_attention_mask: Optional[torch.Tensor] = None,
+    #     output_attentions: Optional[bool] = None,
+    #     output_hidden_states: Optional[bool] = None,
+    #     return_dict: Optional[bool] = None,
+    # ) -> Union[Tuple, BaseModelOutput]:
+    #     r"""
+    #     Args:
+    #         inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
+    #             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation.
+    #             This is useful if you want more control over how to convert `input_ids` indices into associated vectors
+    #             than the model's internal embedding lookup matrix.
+    #         attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+    #             Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+    #             - 1 for tokens that are **not masked**,
+    #             - 0 for tokens that are **masked**.
+
+    #             [What are attention masks?](../glossary#attention-mask)
+    #         causal_attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+    #             Causal mask for the text model. Mask values selected in `[0, 1]`:
+
+    #             - 1 for tokens that are **not masked**,
+    #             - 0 for tokens that are **masked**.
+
+    #             [What are attention masks?](../glossary#attention-mask)
+    #         output_attentions (`bool`, *optional*):
+    #             Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+    #             returned tensors for more detail.
+    #         output_hidden_states (`bool`, *optional*):
+    #             Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
+    #             for more detail.
+    #         return_dict (`bool`, *optional*):
+    #             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+    #     """
+    #     output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+    #     output_hidden_states = (
+    #         output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    #     )
+    #     return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+    #     encoder_states = () if output_hidden_states else None
+    #     all_attentions = () if output_attentions else None
+
+    #     # print("=== at CLIPEncoder")
+    #     # print("===== encoder_states: ", encoder_states)
+    #     # print("===== all_attentions: ", all_attentions)
+
+    #     hidden_states = inputs_embeds
+    #     for idx, encoder_layer in enumerate(self.layers):
+    #     # print("===== output_hidden_states: ", output_hidden_states)
+    #         # if output_hidden_states:
+    #         #     encoder_states = encoder_states + (hidden_states,)
+    #         # if self.gradient_checkpointing and self.training:
+    #         #     layer_outputs = self._gradient_checkpointing_func(
+    #         #         encoder_layer.__call__,
+    #         #         hidden_states,
+    #         #         attention_mask,
+    #         #         causal_attention_mask,
+    #         #         output_attentions,
+    #         #     )
+    #         # else:
+    #         #     print("===== going to not training forward")
+    #         layer_outputs = encoder_layer(
+    #             hidden_states,
+    #             attention_mask,
+    #             causal_attention_mask,
+    #             output_attentions=output_attentions,
+    #         )
+
+    #         hidden_states = layer_outputs[0]
+
+    #         # print("===== output_attentions: ", output_attentions)
+    #         # if output_attentions:
+    #         #     all_attentions = all_attentions + (layer_outputs[1],)
+
+    #     # print("===== output_hidden_states: ", output_hidden_states)
+    #     # if output_hidden_states:
+    #     #     encoder_states = encoder_states + (hidden_states,)
+
+    #     # return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
+    #     return BaseModelOutput(
+    #         last_hidden_state=hidden_states, hidden_states=encoder_states, attentions=all_attentions
+    #     )
+
     def forward(
         self,
         inputs_embeds,
@@ -864,39 +1067,38 @@ class CLIPEncoder(nn.Module):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        encoder_states = () if output_hidden_states else None
-        all_attentions = () if output_attentions else None
+        encoder_states =  None
+        all_attentions =  None
+
+        # print("=== at CLIPEncoder")
+        # print("===== encoder_states: ", encoder_states)
+        # print("===== all_attentions: ", all_attentions)
 
         hidden_states = inputs_embeds
         for idx, encoder_layer in enumerate(self.layers):
-            if output_hidden_states:
-                encoder_states = encoder_states + (hidden_states,)
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    encoder_layer.__call__,
-                    hidden_states,
-                    attention_mask,
-                    causal_attention_mask,
-                    output_attentions,
-                )
-            else:
-                layer_outputs = encoder_layer(
-                    hidden_states,
-                    attention_mask,
-                    causal_attention_mask,
-                    output_attentions=output_attentions,
-                )
+        # print("===== output_hidden_states: ", output_hidden_states)
+            # if output_hidden_states:
+            #     encoder_states = encoder_states + (hidden_states,)
+            # if self.gradient_checkpointing and self.training:
+            #     layer_outputs = self._gradient_checkpointing_func(
+            #         encoder_layer.__call__,
+            #         hidden_states,
+            #         attention_mask,
+            #         causal_attention_mask,
+            #         output_attentions,
+            #     )
+            # else:
+            #     print("===== going to not training forward")
+            layer_outputs = encoder_layer(
+                hidden_states,
+                attention_mask,
+                causal_attention_mask,
+                output_attentions=output_attentions,
+            )
 
             hidden_states = layer_outputs[0]
 
-            if output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
-
-        if output_hidden_states:
-            encoder_states = encoder_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
+        # return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
         return BaseModelOutput(
             last_hidden_state=hidden_states, hidden_states=encoder_states, attentions=all_attentions
         )
@@ -916,7 +1118,101 @@ class CLIPTextTransformer(nn.Module):
 
         # For attention mask, it differs between `flash_attention_2` and other attention implementations
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
+        self.device = torch.device('cpu')
+        # self.device = torch.device('cuda')
+        self.dtype = torch.bfloat16
 
+    # ## original model
+    # @add_start_docstrings_to_model_forward(CLIP_TEXT_INPUTS_DOCSTRING)
+    # @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPTextConfig)
+    # def forward(
+    #     self,
+    #     input_ids: Optional[torch.Tensor] = None,
+    #     attention_mask: Optional[torch.Tensor] = None,
+    #     position_ids: Optional[torch.Tensor] = None,
+    #     output_attentions: Optional[bool] = None,
+    #     output_hidden_states: Optional[bool] = None,
+    #     return_dict: Optional[bool] = None,
+    # ) -> Union[Tuple, BaseModelOutputWithPooling]:
+    #     r"""
+    #     Returns:
+
+    #     """
+    #     output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+    #     output_hidden_states = (
+    #         output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    #     )
+    #     return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+    #     if input_ids is None:
+    #         raise ValueError("You have to specify input_ids")
+
+    #     input_shape = input_ids.size()
+    #     input_ids = input_ids.view(-1, input_shape[-1])
+
+    #     hidden_states = self.embeddings(input_ids=input_ids, position_ids=position_ids)
+
+    #     # CLIP's text model uses causal mask, prepare it here.
+    #     # https://github.com/openai/CLIP/blob/cfcffb90e69f37bf2ff1e988237a0fbe41f33c04/clip/model.py#L324
+    #     causal_attention_mask = _create_4d_causal_attention_mask(
+    #         input_shape, hidden_states.dtype, device=hidden_states.device
+    #     )
+
+    #     # expand attention_mask
+    #     if attention_mask is not None and not self._use_flash_attention_2:
+    #         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+    #         attention_mask = _prepare_4d_attention_mask(attention_mask, hidden_states.dtype)
+
+    #     encoder_outputs = self.encoder(
+    #         inputs_embeds=hidden_states,
+    #         attention_mask=attention_mask,
+    #         causal_attention_mask=causal_attention_mask,
+    #         output_attentions=output_attentions,
+    #         output_hidden_states=output_hidden_states,
+    #         return_dict=return_dict,
+    #     )
+
+    #     last_hidden_state = encoder_outputs[0]
+    #     last_hidden_state = self.final_layer_norm(last_hidden_state)
+
+    #     if self.eos_token_id == 2:
+    #         # The `eos_token_id` was incorrect before PR #24773: Let's keep what have been done here.
+    #         # A CLIP model with such `eos_token_id` in the config can't work correctly with extra new tokens added
+    #         # ------------------------------------------------------------
+    #         # text_embeds.shape = [batch_size, sequence_length, transformer.width]
+    #         # take features from the eot embedding (eot_token is the highest number in each sequence)
+    #         # casting to torch.int for onnx compatibility: argmax doesn't support int64 inputs with opset 14
+    #         pooled_output = last_hidden_state[
+    #             torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
+    #             input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(dim=-1),
+    #         ]
+    #     else:
+    #         # The config gets updated `eos_token_id` from PR #24773 (so the use of exta new tokens is possible)
+    #         pooled_output = last_hidden_state[
+    #             torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
+    #             # We need to get the first position of `eos_token_id` value (`pad_token_ids` might equal to `eos_token_id`)
+    #             # Note: we assume each sequence (along batch dim.) contains an  `eos_token_id` (e.g. prepared by the tokenizer)
+    #             (input_ids.to(dtype=torch.int, device=last_hidden_state.device) == self.eos_token_id)
+    #             .int()
+    #             .argmax(dim=-1),
+    #         ]
+
+    #     # print("return_dict: ", return_dict)
+    #     if not return_dict:
+    #         # print("now is return_dict")
+    #         return (last_hidden_state, pooled_output) + encoder_outputs[1:]
+
+    #     # print("encoder_outputs.hidden_states: ",encoder_outputs.hidden_states.shape)
+    #     # print("encoder_outputs.attentions: ", encoder_outputs.attentions.shape)
+    #     return BaseModelOutputWithPooling(
+    #         last_hidden_state=last_hidden_state,
+    #         pooler_output=pooled_output,
+    #         hidden_states=encoder_outputs.hidden_states,
+    #         attentions=encoder_outputs.attentions,
+    #     )
+
+
+    # ## customized forward
     @add_start_docstrings_to_model_forward(CLIP_TEXT_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPTextConfig)
     def forward(
@@ -941,22 +1237,34 @@ class CLIPTextTransformer(nn.Module):
         if input_ids is None:
             raise ValueError("You have to specify input_ids")
 
+        # run_device = torch.device("cuda")
+        run_device = torch.device("cpu")
         input_shape = input_ids.size()
-        input_ids = input_ids.view(-1, input_shape[-1])
+        input_ids = input_ids.view(-1, input_shape[-1]).to(run_device)
 
+
+        input_shape = torch.Size([1, 77])
+        # hidden_states = torch.ones([1, 77, 768]).to(torch.bfloat16)
         hidden_states = self.embeddings(input_ids=input_ids, position_ids=position_ids)
+
+        # hidden_states
+
+        print("#### at modeling-clip. CLIPTextTransformer")
+        print("#### input_shape: ", input_shape)
+        print("#### hidden_states: ", hidden_states.shape)
+        print("#### self.eos_token_id: ", self.eos_token_id)
 
         # CLIP's text model uses causal mask, prepare it here.
         # https://github.com/openai/CLIP/blob/cfcffb90e69f37bf2ff1e988237a0fbe41f33c04/clip/model.py#L324
+        # causal_attention_mask = _create_4d_causal_attention_mask(
+        #     input_shape, hidden_states.dtype, device=hidden_states.device
+        # )
+
         causal_attention_mask = _create_4d_causal_attention_mask(
-            input_shape, hidden_states.dtype, device=hidden_states.device
+            input_shape, torch.bfloat16, device= run_device
         )
 
         # expand attention_mask
-        if attention_mask is not None and not self._use_flash_attention_2:
-            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            attention_mask = _prepare_4d_attention_mask(attention_mask, hidden_states.dtype)
-
         encoder_outputs = self.encoder(
             inputs_embeds=hidden_states,
             attention_mask=attention_mask,
@@ -967,33 +1275,19 @@ class CLIPTextTransformer(nn.Module):
         )
 
         last_hidden_state = encoder_outputs[0]
+        last_hidden_state_shape = torch.Size([1,77,768])
         last_hidden_state = self.final_layer_norm(last_hidden_state)
+        print("#### last_hidden_state.shape: ", last_hidden_state.shape)
 
-        if self.eos_token_id == 2:
-            # The `eos_token_id` was incorrect before PR #24773: Let's keep what have been done here.
-            # A CLIP model with such `eos_token_id` in the config can't work correctly with extra new tokens added
-            # ------------------------------------------------------------
-            # text_embeds.shape = [batch_size, sequence_length, transformer.width]
-            # take features from the eot embedding (eot_token is the highest number in each sequence)
-            # casting to torch.int for onnx compatibility: argmax doesn't support int64 inputs with opset 14
-            pooled_output = last_hidden_state[
-                torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
-                input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(dim=-1),
-            ]
-        else:
-            # The config gets updated `eos_token_id` from PR #24773 (so the use of exta new tokens is possible)
-            pooled_output = last_hidden_state[
-                torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
-                # We need to get the first position of `eos_token_id` value (`pad_token_ids` might equal to `eos_token_id`)
-                # Note: we assume each sequence (along batch dim.) contains an  `eos_token_id` (e.g. prepared by the tokenizer)
-                (input_ids.to(dtype=torch.int, device=last_hidden_state.device) == self.eos_token_id)
-                .int()
-                .argmax(dim=-1),
-            ]
+        print("#### self.eos_token_id: ", self.eos_token_id)
 
-        if not return_dict:
-            return (last_hidden_state, pooled_output) + encoder_outputs[1:]
+        pooled_output = last_hidden_state[
+            torch.arange(last_hidden_state_shape[0], device=run_device),
+            input_ids.to(dtype=torch.int32, device=run_device).argmax(dim=-1),
+        ]
 
+        # print("encoder_outputs.hidden_states: ",encoder_outputs.hidden_states.shape)
+        # print("encoder_outputs.attentions: ", encoder_outputs.attentions.shape)
         return BaseModelOutputWithPooling(
             last_hidden_state=last_hidden_state,
             pooler_output=pooled_output,
@@ -1493,12 +1787,14 @@ class CLIPTextModelWithProjection(CLIPPreTrainedModel):
             outputs = (text_embeds, text_outputs[0]) + text_outputs[2:]
             return tuple(output for output in outputs if output is not None)
 
-        return CLIPTextModelOutput(
-            text_embeds=text_embeds,
-            last_hidden_state=text_outputs.last_hidden_state,
-            hidden_states=text_outputs.hidden_states,
-            attentions=text_outputs.attentions,
-        )
+        return text_embeds, text_outputs.last_hidden_state
+
+        # return CLIPTextModelOutput(
+        #     text_embeds=text_embeds,
+        #     last_hidden_state=text_outputs.last_hidden_state,
+        #     hidden_states=text_outputs.hidden_states,
+        #     attentions=text_outputs.attentions,
+        # )
 
 
 @add_start_docstrings(
