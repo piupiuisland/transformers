@@ -1118,8 +1118,8 @@ class CLIPTextTransformer(nn.Module):
 
         # For attention mask, it differs between `flash_attention_2` and other attention implementations
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-        self.device = torch.device('cpu')
-        # self.device = torch.device('cuda')
+        # self.device = torch.device('cpu')
+        self.device = torch.device('cuda')
         self.dtype = torch.bfloat16
 
     # ## original model
@@ -1237,8 +1237,8 @@ class CLIPTextTransformer(nn.Module):
         if input_ids is None:
             raise ValueError("You have to specify input_ids")
 
-        # run_device = torch.device("cuda")
-        run_device = torch.device("cpu")
+        run_device = torch.device("cuda")
+        # run_device = torch.device("cpu")
         input_shape = input_ids.size()
         input_ids = input_ids.view(-1, input_shape[-1]).to(run_device)
 
