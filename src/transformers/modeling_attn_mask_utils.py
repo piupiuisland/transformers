@@ -19,6 +19,9 @@ import torch
 from .utils.import_utils import is_torchdynamo_compiling
 
 
+RUN_DEVICE = "cuda"
+
+
 @dataclass
 class AttentionMaskConverter:
     """
@@ -116,7 +119,7 @@ class AttentionMaskConverter:
         query_length: int,
         key_value_length: int,
         dtype: torch.dtype,
-        device: Union[torch.device, "str"] = "cuda",
+        device: Union[torch.device, "str"] = RUN_DEVICE,
     ) -> Optional[torch.Tensor]:
         """
         Creates a causal 4D mask of (bsz, head_dim=1, query_length, key_value_length) shape and adds large negative
@@ -167,6 +170,9 @@ class AttentionMaskConverter:
                 )
 
             past_key_values_length = key_value_length - query_length
+
+            print("----- sliding_window: ", self.sliding_window)
+
             causal_4d_mask = self._make_causal_mask(
                 input_shape,
                 dtype,
@@ -194,7 +200,7 @@ class AttentionMaskConverter:
     def _make_causal_mask(
         input_ids_shape: torch.Size,
         dtype: torch.dtype,
-        device: torch.device = torch.device("cuda"),
+        device: torch.device = torch.device(RUN_DEVICE),
         past_key_values_length: int = 0,
         sliding_window: Optional[int] = None,
     ):
@@ -459,7 +465,7 @@ def _prepare_4d_causal_attention_mask_for_sdpa(
         # Attend to all tokens in masked rows from the causal_mask, for example the relevant first rows when
         # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
         # Details: https://github.com/pytorch/pytorch/issues/110213
-        if not is_tracing and expanded_4d_mask.device.type == "cuda":
+        if not is_tracing and expanded_4d_mask.device.type == RUN_DEVICE:
             expanded_4d_mask = AttentionMaskConverter._unmask_unattended(
                 expanded_4d_mask, min_dtype=torch.finfo(inputs_embeds.dtype).min
             )
