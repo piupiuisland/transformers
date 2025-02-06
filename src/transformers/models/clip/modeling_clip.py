@@ -79,8 +79,8 @@ def _get_vector_norm(tensor: torch.Tensor) -> torch.Tensor:
     return normed_tensor
 
 
-# RUN_DEVICE = torch.device("cuda")
-RUN_DEVICE = torch.device("cpu")
+RUN_DEVICE = torch.device("cuda")
+# RUN_DEVICE = torch.device("cpu")
 
 @dataclass
 class CustomizedBaseModelOutputWithPooling(ModelOutput):
@@ -608,12 +608,9 @@ class CLIPSdpaAttention(CLIPAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        causal_attention_mask: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = False,
+        causal_attention_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
 
-        attn_mask = causal_attention_mask
         # print("hidden_states.size(): ", hidden_states.size())
         qkv_shape = torch.Size([1,77,768])
         bsz, tgt_len, embed_dim = qkv_shape[0], qkv_shape[1], qkv_shape[2]
@@ -630,7 +627,7 @@ class CLIPSdpaAttention(CLIPAttention):
         print("@@@@  query_states.shape", query_states.shape)
         print("@@@@  key_states.shape", key_states.shape)
         print("@@@@  value_states.shape", value_states.shape)
-        print("@@@ attention_mask: ", attn_mask.shape, attn_mask.dtype)
+        print("@@@ attention_mask: ", causal_attention_mask.shape, causal_attention_mask.dtype)
         print("@@@ self.dropout: ", self.dropout)
         print("@@@ self.scale: ", self.scale)
 
@@ -649,7 +646,7 @@ class CLIPSdpaAttention(CLIPAttention):
             query_states,
             key_states,
             value_states,
-            attn_mask=attn_mask,
+            causal_attention_mask,
             dropout_p=0.0,
             scale=self.scale,
         )
@@ -754,9 +751,7 @@ class CLIPEncoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
         causal_attention_mask: torch.Tensor,
-        output_attentions: Optional[bool] = False,
     ) -> Tuple[torch.FloatTensor]:
         """
         Args:
@@ -774,12 +769,9 @@ class CLIPEncoderLayer(nn.Module):
         hidden_states = self.layer_norm1(hidden_states)
         hidden_states, attn_weights = self.self_attn(
             hidden_states=hidden_states,
-            attention_mask=attention_mask,
             causal_attention_mask=causal_attention_mask,
-            output_attentions=output_attentions,
         )
         print("^^^^ at CLIPEncoderLayer: ")
-        print("^^^^ output_attentions: ", output_attentions)
         print("^^^^ attn_weights is none: ", attn_weights is None)
         hidden_states = residual + hidden_states
 
@@ -1070,12 +1062,8 @@ class CLIPEncoder(nn.Module):
 
     def forward(
         self,
-        inputs_embeds,
-        attention_mask: Optional[torch.Tensor] = None,
-        causal_attention_mask: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = False,
+        inputs_embeds: torch.Tensor,
+        causal_attention_mask: torch.Tensor,
     ) -> Union[Tuple, BaseModelOutput]:
         r"""
         Args:
@@ -1106,14 +1094,7 @@ class CLIPEncoder(nn.Module):
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        encoder_states =  None
-        all_attentions =  None
 
         # print("=== at CLIPEncoder")
         # print("===== encoder_states: ", encoder_states)
@@ -1136,19 +1117,15 @@ class CLIPEncoder(nn.Module):
             #     print("===== going to not training forward")
             layer_outputs = encoder_layer(
                 hidden_states,
-                attention_mask,
                 causal_attention_mask,
-                output_attentions=output_attentions,
             )
-
-            hidden_states = layer_outputs
 
         # return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
         # return BaseModelOutput(
         #     last_hidden_state=hidden_states, hidden_states=encoder_states, attentions=all_attentions
         # )
 
-        return hidden_states
+        return layer_outputs
 
 
 class CLIPTextTransformer(nn.Module):
@@ -1263,26 +1240,13 @@ class CLIPTextTransformer(nn.Module):
     # @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPTextConfig)
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        causal_attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = False,
+        input_ids: torch.Tensor,
+        causal_attention_mask: torch.Tensor,
     ) -> Union[Tuple, CustomizedBaseModelOutputWithPooling]:
         r"""
         Returns:
 
         """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if input_ids is None:
-            raise ValueError("You have to specify input_ids")
 
         run_device = RUN_DEVICE
 
@@ -1293,9 +1257,8 @@ class CLIPTextTransformer(nn.Module):
         input_shape = torch.Size([1, 77])
         # print("#### input_ids.device: ", input_ids.device)
         # hidden_states = torch.ones([1, 77, 768]).to(torch.bfloat16)
-        print("#### position_ids: ", position_ids)
 
-        hidden_states = self.embeddings(input_ids=input_ids, position_ids=position_ids)
+        hidden_states = self.embeddings(input_ids=input_ids, position_ids=None)
 
         # hidden_states
 
@@ -1322,11 +1285,7 @@ class CLIPTextTransformer(nn.Module):
         # expand attention_mask
         encoder_outputs = self.encoder(
             inputs_embeds=hidden_states,
-            attention_mask=attention_mask,
             causal_attention_mask=causal_attention_mask,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
         )
 
         last_hidden_state = encoder_outputs
@@ -1378,13 +1337,8 @@ class CLIPTextModel(CLIPPreTrainedModel):
     # @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPTextConfig)
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        causal_attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        input_ids: torch.Tensor = None,
+        causal_attention_mask: torch.Tensor = None,
     ) -> Union[Tuple, BaseModelOutputWithPooling]:
         r"""
         Returns:
@@ -1403,16 +1357,10 @@ class CLIPTextModel(CLIPPreTrainedModel):
         >>> last_hidden_state = outputs.last_hidden_state
         >>> pooled_output = outputs.pooler_output  # pooled (EOS token) states
         ```"""
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         return self.text_model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
             causal_attention_mask=causal_attention_mask,
-            position_ids=position_ids,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
         )
 
 
