@@ -136,6 +136,8 @@ class AttentionMaskConverter:
 
         input_shape = (1,77)
         dtype = torch.bfloat16
+
+        print("--- *** check sliding_window 2: ", self.sliding_window)
         causal_4d_mask = self._make_causal_mask(
             input_shape,
             dtype,
@@ -171,7 +173,7 @@ class AttentionMaskConverter:
 
             past_key_values_length = key_value_length - query_length
 
-            print("----- sliding_window: ", self.sliding_window)
+            print("--- *** check sliding_window 3: ", self.sliding_window)
 
             causal_4d_mask = self._make_causal_mask(
                 input_shape,
@@ -534,6 +536,9 @@ def _create_4d_causal_attention_mask(
         sliding_window (`int`, *optional*):
             If the model uses windowed attention, a sliding window should be passed.
     """
+
+    print("--- ***at _create_4d_causal_attention_mask sliding_window: ", sliding_window is None)
+    print("--- *** check sliding_window 1", sliding_window)
     attn_mask_converter = AttentionMaskConverter(is_causal=True, sliding_window=sliding_window)
 
     key_value_length = past_key_values_length + input_shape[-1]
