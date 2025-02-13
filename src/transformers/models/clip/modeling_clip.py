@@ -615,12 +615,12 @@ class CLIPSdpaAttention(CLIPAttention):
 
 
         # CLIP text model uses both `causal_attention_mask` and `attention_mask` sequentially.
-        attn_output = torch.nn.functional.scaled_dot_product_attention(
+        attn_output = self.forward_scaled_dp_attention(
             query_states,
             key_states,
             value_states,
             attn_mask=attn_mask,
-            dropout_p=self.dropout if self.training else 0.0,
+            # dropout_p=self.dropout if self.training else 0.0,
             scale=self.scale,
         )
 
@@ -630,6 +630,20 @@ class CLIPSdpaAttention(CLIPAttention):
         attn_output = self.out_proj(attn_output)
 
         return attn_output
+
+    def forward_scaled_dp_attention(self, query, key, value, attn_mask, dropout_p=0.0, scale=0.125) -> torch.Tensor:
+        # L, S = query.size(-2), key.size(-2)
+        # attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
+
+        # attn_bias = torch.zeros(77, 77, dtype=torch.bfloat16, device=RUN_DEVICE)
+        # attn_bias = attn_mask + attn_bias
+
+        attn_weight = query @ key.transpose(2, 3) * scale
+        attn_weight = attn_weight + attn_mask
+        attn_weight = torch.softmax(attn_weight, dim=3)
+        # attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
+        return attn_weight @ value
+
 
 
 CLIP_ATTENTION_CLASSES = {
@@ -1209,9 +1223,9 @@ class CLIPTextTransformer(nn.Module):
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPTextConfig)
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
+        input_ids: torch.Tensor,
+        causal_attention_mask: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        causal_attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,

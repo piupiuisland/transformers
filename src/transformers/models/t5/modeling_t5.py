@@ -2062,8 +2062,8 @@ class T5EncoderModel(T5PreTrainedModel):
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = False,
+        return_dict: Optional[bool] = True,
     ) -> Union[Tuple[torch.FloatTensor], BaseModelOutput]:
         r"""
         Returns:
